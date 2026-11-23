@@ -1,0 +1,54 @@
+# Publishes a Job Assistant release. The release script pushes the new version's files to the branch "incoming"
+# (big files cut into pieces under GitHub's 100 MB file limit). This job puts the pieces back together, checks every
+# file against the sizes and SHA-256 sums in latest.json / latest-android.json, publishes them as one GitHub
+# release, and deletes the branch again, so the repository itself never holds the installers.
+name: Publish release
+on:
+  push:
+    branches: [incoming]
+permissions:
+  contents: write
+concurrency:
+  group: publish
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: incoming
+      - name: Put the files together and check them
+        id: files
+        run: |
+          set -euo pipefail
+          dir=$(ls -d incoming/*/ | head -1); dir=${dir%/}
+          version=$(basename "$dir")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          mkdir -p out
+          for meta in "$dir"/latest.json "$dir"/latest-android.json; do
+            [ -f "$meta" ] || continue
+            file=$(jq -r .file "$meta"); sha=$(jq -r .sha256 "$meta"); size=$(jq -r .size "$meta"); v=$(jq -r .version "$meta")
+            [ "$v" = "$version" ] || { echo "$meta is for $v, not $version"; exit 1; }
+            if [ -f "$dir/$file" ]; then cp "$dir/$file" "out/$file"; else cat "$dir/$file".part-* > "out/$file"; fi
+            [ "$(stat -c %s "out/$file")" = "$size" ] || { echo "$file has the wrong size"; exit 1; }
+            echo "$sha  out/$file" | sha256sum -c -
+            cp "$meta" out/
+          done
+          ls -l out
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          v=${{ steps.files.outputs.version }}
+          dir=incoming/$v
+          notes=$(cat "$dir/notes.md" 2>/dev/null || echo "Job Assistant $v")
+          if gh release view "v$v" >/dev/null 2>&1; then
+            gh release upload "v$v" out/* --clobber
+          else
+            gh release create "v$v" out/* --title "Job Assistant $v" --notes "$notes" --latest --target main
+          fi
+      - name: Remove the branch
+        if: success()
+        run: git push origin --delete incoming
