@@ -12,3 +12,5 @@ and SHA-256 sum in these files before installing it.
 
 New versions are published by the workflow in `.github/workflows/publish.yml`: the release script pushes the files
 to the branch `incoming`; the workflow checks them, publishes the release and deletes the branch.
+
+Privacy policy (Gmail sign-in with Google): [PRIVACY.md](PRIVACY.md)
